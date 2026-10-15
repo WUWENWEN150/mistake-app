@@ -2,6 +2,9 @@ import streamlit as st
 import datetime as dt
 import pandas as pd
 from supabase import create_client
+from streamlit_cropper import st_cropper
+from PIL import Image
+import io
 
 # ---------- 读取密钥 ----------
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
@@ -11,12 +14,13 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 INTERVALS = [1, 2, 4, 7, 15, 30]
 
 # ---------- 数据操作 ----------
-def add_mistake(subject, question, answer, analysis, tags, image_url=""):
+def add_mistake(subject, question, answer, analysis, tags, image_url="", image_url2=""):
     today = dt.date.today()
     next_review = today + dt.timedelta(days=INTERVALS[0])
     supabase.table("mistakes").insert({
         "subject": subject, "question": question, "answer": answer,
-        "analysis": analysis, "tags": tags, "image_url": image_url,
+        "analysis": analysis, "tags": tags,
+        "image_url": image_url, "image_url2": image_url2,
         "stage": 0, "next_review": next_review.isoformat()
     }).execute()
 
@@ -58,10 +62,10 @@ def update_mistake(mid, subject, question, answer, analysis, tags):
 def delete_mistake(mid):
     supabase.table("mistakes").delete().eq("id", mid).execute()
 
-def upload_image(file):
-    path = f"{dt.datetime.now().timestamp()}_{file.name}"
+def upload_image_bytes(img_bytes, filename):
+    path = f"{dt.datetime.now().timestamp()}_{filename}"
     supabase.storage.from_("mistake-images").upload(
-        path, file.getvalue(), {"content-type": file.type})
+        path, img_bytes, {"content-type": "image/png"})
     return supabase.storage.from_("mistake-images").get_public_url(path)
 
 # ---------- 界面 ----------
@@ -72,18 +76,52 @@ tab1, tab2, tab3, tab4 = st.tabs(["➕ 录入", "🔁 复习", "📋 全部错�
 
 # --- 录入 ---
 with tab1:
-    with st.form("add"):
-        subject = st.text_input("科目", "数学")
-        question = st.text_area("题目")
-        img = st.file_uploader("上传题目图片（可选）", type=["png", "jpg", "jpeg"])
-        answer = st.text_area("正确答案")
-        analysis = st.text_area("解析/错因")
-        tags = st.text_input("知识点标签", "")
-        ok = st.form_submit_button("保存")
-        if ok and question:
-            img_url = upload_image(img) if img else ""
-            add_mistake(subject, question, answer, analysis, tags, img_url)
+    subject = st.text_input("科目", "数学")
+
+    # 图片上传 + 裁剪
+    st.markdown("**① 上传整页照片，拖框选出这道题**")
+    img_file = st.file_uploader("上传图片（可选）", type=["png", "jpg", "jpeg"], key="uploader")
+    cropped_bytes = None
+    if img_file:
+        img = Image.open(img_file)
+        st.caption("👇 拖动方框，只保留这道题，然后点下方\"裁剪\"按钮")
+        cropped = st_cropper(
+            img,
+            realtime_update=True,
+            box_color="#FF6B6B",
+            aspect_ratio=None,
+            return_type="image"
+        )
+        st.image(cropped, caption="预览（这就是会保存的图）", use_container_width=True)
+        if st.button("✂️ 确认使用这张裁剪图"):
+            buf = io.BytesIO()
+            cropped.save(buf, format="PNG")
+            cropped_bytes = buf.getvalue()
+            st.session_state["cropped_bytes"] = cropped_bytes
+            st.success("已裁剪，继续往下填写即可")
+    if "cropped_bytes" in st.session_state:
+        cropped_bytes = st.session_state["cropped_bytes"]
+
+    question = st.text_area("题目（文字，可选）")
+    img2 = st.file_uploader("上传解析图片（可选，第二张）", type=["png", "jpg", "jpeg"], key="uploader2")
+    answer = st.text_area("正确答案")
+    analysis = st.text_area("解析/错因")
+    tags = st.text_input("知识点标签", "")
+
+    if st.button("💾 保存"):
+        if not question and not cropped_bytes:
+            st.warning("题目文字和图片至少填一个")
+        else:
+            url1 = upload_image_bytes(cropped_bytes, "q.png") if cropped_bytes else ""
+            url2 = ""
+            if img2:
+                buf2 = io.BytesIO()
+                Image.open(img2).save(buf2, format="PNG")
+                url2 = upload_image_bytes(buf2.getvalue(), "a.png")
+            add_mistake(subject, question, answer, analysis, tags, url1, url2)
+            st.session_state.pop("cropped_bytes", None)
             st.success("已保存，明天首次复习。")
+            st.rerun()
 
 # --- 复习 ---
 with tab2:
@@ -92,14 +130,17 @@ with tab2:
     if due.empty:
         st.info("今天没有需要复习的题目 🎉")
     for _, row in due.iterrows():
-        with st.expander(f"[{row['subject']}] {row['question'][:30]}..."):
-            st.markdown(f"**题目：** {row['question']}")
+        with st.expander(f"[{row['subject']}] {str(row['question'])[:30]}..."):
             if row.get("image_url"):
-                st.image(row["image_url"])
+                st.image(row["image_url"], caption="题目图")
+            if row.get("question"):
+                st.markdown(f"**题目：** {row['question']}")
             st.caption(f"阶段 {row['stage'] + 1}/{len(INTERVALS)} ｜ 标签：{row['tags']}")
             if st.button("显示答案", key=f"s{row['id']}"):
                 st.markdown(f"**答案：** {row['answer']}")
                 st.markdown(f"**解析：** {row['analysis']}")
+                if row.get("image_url2"):
+                    st.image(row["image_url2"], caption="解析图")
             c1, c2 = st.columns(2)
             if c1.button("✅ 答对", key=f"ok{row['id']}"):
                 review(row["id"], True); st.rerun()
@@ -107,12 +148,11 @@ with tab2:
                 review(row["id"], False); st.rerun()
 
 # --- 全部错题 ---
-with tab4 if False else tab3:
+with tab3:
     df = get_all()
     if df.empty:
         st.info("还没有错题记录。")
     else:
-        # 筛选区
         c1, c2, c3 = st.columns(3)
         subj_filter = c1.selectbox("按科目筛选", ["全部"] + sorted(df["subject"].dropna().unique().tolist()))
         kw = c2.text_input("关键词搜索（题目/答案/标签）")
@@ -142,20 +182,27 @@ with tab4 if False else tab3:
         )
 
         st.markdown("---")
-        st.subheader("✏️ 编辑 / 🗑️ 删除")
+        st.subheader("👁️ 查看详情 / ✏️ 编辑 / 🗑️ 删除")
         edit_id = st.selectbox(
-            "选择要操作的错题 ID",
+            "选择错题 ID",
             options=fdf["id"].tolist(),
-            format_func=lambda x: f"#{x} - {df[df['id']==x]['question'].values[0][:40]}"
+            format_func=lambda x: f"#{x} - {str(df[df['id']==x]['question'].values[0])[:40]}"
         )
         if edit_id:
             row = df[df["id"] == edit_id].iloc[0]
+            if row.get("image_url") or row.get("image_url2"):
+                cc1, cc2 = st.columns(2)
+                if row.get("image_url"):
+                    cc1.image(row["image_url"], caption="题目图")
+                if row.get("image_url2"):
+                    cc2.image(row["image_url2"], caption="解析图")
+
             with st.form(f"edit_{edit_id}"):
                 e_subject = st.text_input("科目", row["subject"])
-                e_question = st.text_area("题目", row["question"])
-                e_answer = st.text_area("答案", row["answer"])
-                e_analysis = st.text_area("解析", row["analysis"])
-                e_tags = st.text_input("标签", row["tags"])
+                e_question = st.text_area("题目", row["question"] or "")
+                e_answer = st.text_area("答案", row["answer"] or "")
+                e_analysis = st.text_area("解析", row["analysis"] or "")
+                e_tags = st.text_input("标签", row["tags"] or "")
                 col1, col2 = st.columns(2)
                 save = col1.form_submit_button("💾 保存修改")
                 dele = col2.form_submit_button("🗑️ 删除此题")
