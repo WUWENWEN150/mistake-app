@@ -3,6 +3,7 @@ import datetime as dt
 import pandas as pd
 from supabase import create_client
 from streamlit_cropper import st_cropper
+from streamlit_paste_button import paste_image_button as pbutton
 from PIL import Image
 import io
 
@@ -78,37 +79,50 @@ tab1, tab2, tab3, tab4 = st.tabs(["➕ 录入", "🔁 复习", "📋 全部错�
 with tab1:
     subject = st.text_input("科目", "数学")
 
-    # 图片上传 + 裁剪
-    st.markdown("**① 上传整页照片，拖框选出这道题**")
-    img_file = st.file_uploader("上传图片（可选）", type=["png", "jpg", "jpeg"], key="uploader")
-    cropped_bytes = None
-    if img_file:
-        img = Image.open(img_file)
-        st.caption("👇 拖动方框，只保留这道题，然后点下方\"裁剪\"按钮")
+    st.markdown("### ① 获取题目图片")
+    st.caption("方式一：复制图片后（Ctrl+C），点下面按钮粘贴")
+    pasted = pbutton(label="📋 从剪贴板粘贴图片")
+
+    img = None
+    if pasted.image_data is not None:
+        img = Image.open(io.BytesIO(pasted.image_data)).convert("RGB")
+        st.session_state["src_img"] = img
+
+    st.caption("方式二：或从电脑选择文件")
+    uploaded = st.file_uploader("上传图片（可选）", type=["png", "jpg", "jpeg"], key="uploader")
+    if uploaded:
+        img = Image.open(uploaded).convert("RGB")
+        st.session_state["src_img"] = img
+
+    if "src_img" in st.session_state:
+        src = st.session_state["src_img"]
+        st.markdown("### ② 拖框裁剪（只保留这道题）")
+        st.caption("拖动方框，框住你要的题目部分。手机上也适用。")
         cropped = st_cropper(
-            img,
+            src,
             realtime_update=True,
             box_color="#FF6B6B",
             aspect_ratio=None,
             return_type="image"
         )
-        st.image(cropped, caption="预览（这就是会保存的图）", use_container_width=True)
-        if st.button("✂️ 确认使用这张裁剪图"):
+        st.image(cropped, caption="预览：这张会被保存", use_container_width=True)
+        if st.button("✂️ 使用这张裁剪图"):
             buf = io.BytesIO()
             cropped.save(buf, format="PNG")
-            cropped_bytes = buf.getvalue()
-            st.session_state["cropped_bytes"] = cropped_bytes
-            st.success("已裁剪，继续往下填写即可")
-    if "cropped_bytes" in st.session_state:
-        cropped_bytes = st.session_state["cropped_bytes"]
+            st.session_state["cropped_bytes"] = buf.getvalue()
+            st.success("已裁剪。继续往下填写。")
+    else:
+        st.info("先粘贴或上传一张图片")
 
-    question = st.text_area("题目（文字，可选）")
+    st.markdown("### ③ 填写题目信息")
+    question = st.text_area("题目文字（可选，如果图片已经很清晰可以留空）")
     img2 = st.file_uploader("上传解析图片（可选，第二张）", type=["png", "jpg", "jpeg"], key="uploader2")
     answer = st.text_area("正确答案")
     analysis = st.text_area("解析/错因")
     tags = st.text_input("知识点标签", "")
 
     if st.button("💾 保存"):
+        cropped_bytes = st.session_state.get("cropped_bytes")
         if not question and not cropped_bytes:
             st.warning("题目文字和图片至少填一个")
         else:
@@ -116,10 +130,12 @@ with tab1:
             url2 = ""
             if img2:
                 buf2 = io.BytesIO()
-                Image.open(img2).save(buf2, format="PNG")
+                Image.open(img2).convert("RGB").save(buf2, format="PNG")
                 url2 = upload_image_bytes(buf2.getvalue(), "a.png")
             add_mistake(subject, question, answer, analysis, tags, url1, url2)
+            # 清理缓存，避免影响下一题
             st.session_state.pop("cropped_bytes", None)
+            st.session_state.pop("src_img", None)
             st.success("已保存，明天首次复习。")
             st.rerun()
 
