@@ -125,7 +125,7 @@ with tab1:
             aspect_ratio=None,
             return_type="image"
         )
-        st.image(cropped, caption="预览：这张会被保存", use_container_width=True)
+        st.image(cropped, caption="预览", width=300)
         if st.button("✂️ 使用这张裁剪图"):
             buf = io.BytesIO()
             cropped.save(buf, format="PNG")
