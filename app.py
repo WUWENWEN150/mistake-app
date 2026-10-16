@@ -88,10 +88,11 @@ def upload_image_bytes(img_bytes, filename):
 st.set_page_config(page_title="错题记忆", page_icon="📚", layout="wide")
 st.title("📚 错题记忆助手")
 
-tab1, tab2, tab3, tab4 = st.tabs(["➕ 录入", "🔁 复习", "📋 全部错题", "📊 统计"])
+tab1, tab2, tab3, tab4 = st.tabs(["➕ 录入", "🔁 复习", "📋 题库", "📊 统计"])
 
+# ============ 录入 ============
 with tab1:
-    subject = st.text_input("科目", "数学")
+    subject = st.text_input("科目", "数学", key="add_subject")
 
     st.markdown("### ① 获取题目图片")
     st.caption("方式一：复制图片后（Ctrl+C），点下面按钮粘贴")
@@ -135,11 +136,11 @@ with tab1:
         st.info("先粘贴或上传一张图片")
 
     st.markdown("### ③ 填写题目信息")
-    question = st.text_area("题目文字（可选）")
+    question = st.text_area("题目文字（可选）", key="add_question")
     img2 = st.file_uploader("上传解析图片（可选，第二张）", type=["png", "jpg", "jpeg"], key="uploader2")
-    answer = st.text_area("正确答案")
-    analysis = st.text_area("解析/错因")
-    tags = st.text_input("知识点标签", "")
+    answer = st.text_area("正确答案", key="add_answer")
+    analysis = st.text_area("解析/错因", key="add_analysis")
+    tags = st.text_input("知识点标签", "", key="add_tags")
 
     if st.button("💾 保存"):
         cropped_bytes = st.session_state.get("cropped_bytes")
@@ -155,11 +156,15 @@ with tab1:
                 Image.open(img2).convert("RGB").save(buf2, format="PNG")
                 url2 = upload_image_bytes(buf2.getvalue(), "a.png")
             add_mistake(subject, question, answer, analysis, tags, url1, url2)
+            # 清空
             st.session_state.pop("cropped_bytes", None)
             st.session_state.pop("src_img", None)
+            for k in ["add_question", "add_answer", "add_analysis", "add_tags"]:
+                st.session_state.pop(k, None)
             st.success("已保存，明天首次复习。")
             st.rerun()
 
+# ============ 复习 ============
 with tab2:
     due = get_due_today()
     st.subheader("今日待复习：" + str(len(due)) + " 题")
@@ -186,16 +191,19 @@ with tab2:
                 review(row["id"], False)
                 st.rerun()
 
+# ============ 题库 ============
 with tab3:
     df = get_all()
     if df.empty:
         st.info("还没有错题记录。")
     else:
-        c1, c2, c3 = st.columns(3)
+        # ---- 顶部搜索区 ----
+        st.markdown("### 🔍 搜索 / 筛选")
+        c1, c2, c3 = st.columns([2, 2, 1])
+        kw = c1.text_input("关键词（题目 / 答案 / 标签）")
         subjects = ["全部"] + sorted(df["subject"].dropna().unique().tolist())
-        subj_filter = c1.selectbox("按科目筛选", subjects)
-        kw = c2.text_input("关键词搜索（题目/答案/标签）")
-        sort_by = c3.selectbox("排序", ["最新录入", "下次复习时间", "错误次数"])
+        subj_filter = c2.selectbox("科目", subjects)
+        sort_by = c3.selectbox("排序", ["最新录入", "下次复习", "错误次数"])
 
         fdf = df.copy()
         if subj_filter != "全部":
@@ -209,26 +217,45 @@ with tab3:
             fdf = fdf[mask]
         if sort_by == "最新录入":
             fdf = fdf.sort_values("id", ascending=False)
-        elif sort_by == "下次复习时间":
+        elif sort_by == "下次复习":
             fdf = fdf.sort_values("next_review")
         elif sort_by == "错误次数":
             fdf = fdf.sort_values("wrong_count", ascending=False)
 
         st.caption("共 " + str(len(fdf)) + " 条（总 " + str(len(df)) + " 条）")
-        st.dataframe(
-            fdf[["id", "subject", "question", "tags", "stage", "next_review", "wrong_count"]],
+
+        # ---- 可点选的表格 ----
+        st.markdown("### 👆 点下面表格的某一行，即可选中它")
+        show_df = fdf[["id", "subject", "question", "tags", "stage", "next_review", "wrong_count"]].copy()
+        event = st.dataframe(
+            show_df,
             use_container_width=True,
-            hide_index=True
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row"
         )
 
+        # 根据点选的行，取 id
+        selected_id = None
+        if event and event.selection and event.selection.rows:
+            row_idx = event.selection.rows[0]
+            selected_id = int(show_df.iloc[row_idx]["id"])
+
+        # ---- 详情 / 编辑 / 删除 ----
         st.markdown("---")
-        st.subheader("👁️ 查看详情 / ✏️ 编辑 / 🗑️ 删除")
-        ids = fdf["id"].tolist()
+        st.subheader("👁️ 详情 / ✏️ 修改 / 🗑️ 删除")
+
+        default_idx = 0
+        if selected_id is not None and selected_id in fdf["id"].tolist():
+            default_idx = fdf["id"].tolist().index(selected_id)
+
         edit_id = st.selectbox(
-            "选择错题 ID",
-            options=ids,
+            "错题 ID（也可手动切换）",
+            options=fdf["id"].tolist(),
+            index=default_idx,
             format_func=lambda x: "#" + str(x) + " - " + str(df[df["id"] == x]["question"].values[0])[:40]
         )
+
         if edit_id:
             row = df[df["id"] == edit_id].iloc[0]
             if row.get("image_url") or row.get("image_url2"):
@@ -238,11 +265,11 @@ with tab3:
                 if row.get("image_url2"):
                     cc2.image(row["image_url2"], caption="解析图")
 
-            with st.form("edit_" + str(edit_id)):
+            with st.form("edit_form_" + str(edit_id)):
                 e_subject = st.text_input("科目", row["subject"] or "")
-                e_question = st.text_area("题目", row["question"] or "")
-                e_answer = st.text_area("答案", row["answer"] or "")
-                e_analysis = st.text_area("解析", row["analysis"] or "")
+                e_question = st.text_area("题目", row["question"] or "", height=150)
+                e_answer = st.text_area("答案", row["answer"] or "", height=100)
+                e_analysis = st.text_area("解析", row["analysis"] or "", height=120)
                 e_tags = st.text_input("标签", row["tags"] or "")
                 col1, col2 = st.columns(2)
                 save = col1.form_submit_button("💾 保存修改")
@@ -257,6 +284,7 @@ with tab3:
                     st.success("已删除")
                     st.rerun()
 
+# ============ 统计 ============
 with tab4:
     df = get_all()
     if df.empty:
