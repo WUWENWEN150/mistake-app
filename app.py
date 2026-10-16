@@ -1,11 +1,11 @@
- streamlit as st
-import datetime as dt
-import pandas as pd
-from supabase import create_client
-from streamlit_cropper import st_cropper
-from streamlit_paste_button import paste_image_button as pbutton
-from PIL import Image
-import io
+streamlit 作为 st
+导入 datetime 为 dt
+导入 pandas 为 pd
+从 supabase 导入 create_client
+从 streamlit_cropper 导入 st_cropper
+从 streamlit_paste_button 导入 paste_image_button 为 pbutton
+从 PIL 导入 Image
+导入 io
 
 # ---------- 读取密钥 ----------
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
@@ -49,15 +49,15 @@ def review(mid, correct):
         阶段 = 0
         wrong_count += 1
         next_date = dt.date.today() + dt.timedelta(days=INTERVALS[0])
-    supabase.table("mistakes").update({
-        "stage": stage, "next_review": next_date.isoformat(),
+    supabase.表("mistakes").更新({
+        "阶段": 阶段, "下次审核": 下次日期。isoformat(),
         "wrong_count": wrong_count
     }).eq("id", mid).execute()
 
 def update_mistake(mid, subject, question, answer, analysis, tags):
-    supabase.table("mistakes").update({
-        "subject": subject, "question": question, "answer": answer,
-        "analysis": analysis, "tags": tags
+    supabase.表("mistakes").更新({
+        "主题": 主题, "问题": 问题, "答案": 答案,
+        "分析": 分析, "标签": 标签
     }).eq("id", mid).execute()
 
 def delete_mistake(mid):
