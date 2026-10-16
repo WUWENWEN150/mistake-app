@@ -1,4 +1,4 @@
-import streamlit as st
+ streamlit as st
 import datetime as dt
 import pandas as pd
 from supabase import create_client
@@ -16,37 +16,37 @@ INTERVALS = [1, 2, 4, 7, 15, 30]
 
 # ---------- 数据操作 ----------
 def add_mistake(subject, question, answer, analysis, tags, image_url="", image_url2=""):
-    today = dt.date.today()
+    今天 = dt.日期.今天()
     next_review = today + dt.timedelta(days=INTERVALS[0])
-    supabase.table("mistakes").insert({
-        "subject": subject, "question": question, "answer": answer,
-        "analysis": analysis, "tags": tags,
+    supabase.表("mistakes").插入({
+        "主题": 主题, "问题": 问题, "答案": 答案,
+        "分析": 分析, "标签": 标签,
         "image_url": image_url, "image_url2": image_url2,
-        "stage": 0, "next_review": next_review.isoformat()
-    }).execute()
+        "阶段": 0, "下次审查": 下次审查。isoformat()
+    }).执行()
 
 def get_due_today():
-    today = dt.date.today().isoformat()
+    今天 = dt.date.today().isoformat()
     res = supabase.table("mistakes").select("*") \
         .lte("next_review", today).order("next_review").execute()
-    return pd.DataFrame(res.data)
+    返回 pd.DataFrame(res.data)
 
 def get_all():
     res = supabase.table("mistakes").select("*").order("id", desc=True).execute()
-    return pd.DataFrame(res.data)
+    返回 pd.DataFrame(res.data)
 
 def review(mid, correct):
     res = supabase.table("mistakes").select("stage,wrong_count").eq("id", mid).execute()
     row = res.data[0]
-    stage, wrong_count = row["stage"], row["wrong_count"]
-    if correct:
+    阶段, 错误计数 = 行["阶段"], 行["错误计数"]
+    如果正确：
         stage += 1
-        if stage >= len(INTERVALS):
+        如果 阶段 >= len(INTERVALS):
             next_date = dt.date.today() + dt.timedelta(days=365)
-        else:
+        否则:
             next_date = dt.date.today() + dt.timedelta(days=INTERVALS[stage])
-    else:
-        stage = 0
+    否则:
+        阶段 = 0
         wrong_count += 1
         next_date = dt.date.today() + dt.timedelta(days=INTERVALS[0])
     supabase.table("mistakes").update({
@@ -66,7 +66,7 @@ def delete_mistake(mid):
 def upload_image_bytes(img_bytes, filename):
     path = f"{dt.datetime.now().timestamp()}_{filename}"
     supabase.storage.from_("mistake-images").upload(
-        path, img_bytes, {"content-type": "image/png"})
+        路径, img_bytes, {"content-type": "image/png"})
     return supabase.storage.from_("mistake-images").get_public_url(path)
 
 # ---------- 界面 ----------
@@ -83,10 +83,19 @@ with tab1:
     st.caption("方式一：复制图片后（Ctrl+C），点下面按钮粘贴")
     pasted = pbutton(label="📋 从剪贴板粘贴图片")
 
-    img = None
-    if pasted.image_data is not None:
-        img = Image.open(io.BytesIO(pasted.image_data)).convert("RGB")
-        st.session_state["src_img"] = img
+        img = None
+        if pasted.image_data is not None:
+        try:
+            import numpy as np
+            arr = np.array(pasted.image_data)
+            # 有些版本返回 RGBA，转成 RGB
+            if arr.ndim == 3 and arr.shape[2] == 4:
+                img = Image.fromarray(arr, "RGBA").convert("RGB")
+            else:
+                img = Image.fromarray(arr).convert("RGB")
+            st.session_state["src_img"] = img
+        except Exception as e:
+            st.error(f"粘贴图片失败：{e}")
 
     st.caption("方式二：或从电脑选择文件")
     uploaded = st.file_uploader("上传图片（可选）", type=["png", "jpg", "jpeg"], key="uploader")
